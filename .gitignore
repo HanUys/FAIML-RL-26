@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Experiment tracking / logs
+wandb/
+runs/
+logs/
+*.log
+
+# Models / checkpoints / outputs
+*.pt
+*.pth
+*.zip
+*.mp4
+*.avi
+*.gif
+
+# Python / environment
+.env
+.DS_Store
