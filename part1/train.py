@@ -14,6 +14,8 @@ import argparse
 import random
 import time
 from collections import deque
+import csv
+from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
@@ -43,6 +45,20 @@ def parse_args():
         type=int,
         default=42,
         help="Random seed for reproducibility",
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="results",
+        help="Directory where training results will be saved",
+    )
+
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default="reinforce_no_baseline",
+        help="Name of this training run",
     )
 
     return parser.parse_args()
@@ -77,6 +93,12 @@ def main():
     agent = Agent(policy=policy, device=device)
 
     recent_returns = deque(maxlen=20)
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents= True, exist_ok=True)
+
+    csv_path = output_dir / f"{args.run_name}.csv"
+    results = []
 
     start_time = time.time()
 
@@ -114,6 +136,21 @@ def main():
         recent_returns.append(episode_reward)
         moving_avg_return = np.mean(recent_returns)
 
+        elapsed_time = time.time() - start_time
+
+        results.append(
+            {
+                "episode": episode,
+                "steps": step_count,
+                "return": episode_reward,
+                "moving_avg_return": moving_avg_return,
+                "loss": loss,
+                "elapsed_time_sec": elapsed_time,
+                "seed": args.seed,
+                "algorithm": "reinforce_no_baseline",
+            }
+        )
+
         print(
             f"Episode {episode:04d} | "
             f"steps = {step_count:04d} | "
@@ -128,6 +165,24 @@ def main():
     print(f"Total training time: {total_time:.2f} seconds")
     print(f"Average time per episode: {total_time / args.episodes:.2f} seconds")
 
+    with open(csv_path, mode="w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "episode",
+                "steps",
+                "return",
+                "moving_avg_return",
+                "loss",
+                "elapsed_time_sec",
+                "seed",
+                "algorithm",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(results)
+
+    print(f"Results saved to: {csv_path}")
     env.close()
 
 
