@@ -61,6 +61,27 @@ def parse_args():
         help="Name of this training run",
     )
 
+    parser.add_argument(
+        "--baseline-type",
+        type=str,
+        default="none",
+        choices=["none", "constant"],
+        help="Baseline type for REINFORCE: none or constant",
+    )
+
+    parser.add_argument(
+        "--baseline-value",
+        type=float,
+        default=0.0,
+        help="Constant baseline value used when baseline-type is constant",
+    )
+
+    parser.add_argument(
+        "--normalize-advantages",
+        action="store_true",
+        help="Normalize advantages before computing the policy loss",
+    )
+
     return parser.parse_args()
 
 
@@ -79,6 +100,7 @@ def main():
 
     print("State space:", env.observation_space)
     print("Action space:", env.action_space)
+    print("Normalize advantages:", args.normalize_advantages)
 
     state_space = env.observation_space.shape[0]
     action_space = env.action_space.shape[0]
@@ -88,9 +110,17 @@ def main():
     print("Episodes:", args.episodes)
     print("Render:", args.render)
     print("Seed:", args.seed)
+    print("Baseline type:", args.baseline_type)
+    print("Baseline value:", args.baseline_value)
 
     policy = Policy(state_space=state_space, action_space=action_space)
-    agent = Agent(policy=policy, device=device)
+    agent = Agent(
+                policy=policy,
+                device=device,
+                baseline_type=args.baseline_type,
+                baseline_value=args.baseline_value,
+                normalize_advantages=args.normalize_advantages,
+                )
 
     recent_returns = deque(maxlen=20)
 
@@ -147,7 +177,10 @@ def main():
                 "loss": loss,
                 "elapsed_time_sec": elapsed_time,
                 "seed": args.seed,
-                "algorithm": "reinforce_no_baseline",
+                "algorithm": f"reinforce_{args.baseline_type}_baseline",
+                "baseline_type": args.baseline_type,
+                "baseline_value": args.baseline_value,
+                "normalize_advantages": args.normalize_advantages,
             }
         )
 
@@ -177,6 +210,9 @@ def main():
                 "elapsed_time_sec",
                 "seed",
                 "algorithm",
+                "baseline_type",
+                "baseline_value",
+                "normalize_advantages",
             ],
         )
         writer.writeheader()

@@ -83,10 +83,15 @@ class Policy(torch.nn.Module):
 
 
 class Agent(object):
-    def __init__(self, policy, device='cpu'):
+    def __init__(self, policy, device='cpu', baseline_type="none", baseline_value=0.0,normalize_advantages=False,):
         self.train_device = device
         self.policy = policy.to(self.train_device)
         self.optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
+
+        # REINFORCE baseline configuration
+        self.baseline_type = baseline_type
+        self.baseline_value = baseline_value
+        self.normalize_advantages = normalize_advantages
 
         self.gamma = 0.99
         self.states = []
@@ -100,7 +105,7 @@ class Agent(object):
         #This combines all stored action log probabilities into one tensor.
         action_log_probs = torch.stack(self.action_log_probs, dim=0).to(self.train_device).squeeze(-1)
         
-        #This combines all stored action log probabilities into one tensor.
+        #This combines all stored action log probabilit0ies into one tensor.
         states = torch.stack(self.states, dim=0).to(self.train_device).squeeze(-1)
         
         #This creates a tensor of next states.
@@ -125,17 +130,35 @@ class Agent(object):
         # 1. Compute discounted returns G_t for each timestep
         returns = discount_rewards(rewards, self.gamma)
 
-        # 2. Normalize returns for more stable learning
-        # This does not change the idea of REINFORCE.
-        # It only helps reduce numerical instability.
-        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
+        # 2. Apply baseline if requested
+        # Without baseline:
+        #   advantage = G_t
+        # With constant baseline:
+        #   advantage = G_t - b
+        if self.baseline_type == "none":
+            advantages = returns
 
-        # 3. Policy gradient loss
+        elif self.baseline_type == "constant":
+            advantages = returns - self.baseline_value
+
+        else:
+            raise ValueError(f"Unknown baseline_type: {self.baseline_type}")
+        
+        # 3. Optional advantage normalization
+        # Note:
+        # Full mean-normalization can cancel the effect of a constant baseline.
+        # Therefore, for the official constant-baseline comparison,
+        # keep normalize_advantages=False.
+        if self.normalize_advantages:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+
+        # 4. Policy gradient loss
         # REINFORCE objective: maximize log_prob(action) * return
         # PyTorch minimizes losses, so we use the negative sign.
-        policy_loss = -(action_log_probs * returns).sum()
+        policy_loss = -(action_log_probs * advantages).sum()
 
-        # 4. Backpropagation and optimizer step
+        # 5. Backpropagation and optimizer step
         self.optimizer.zero_grad()
         policy_loss.backward()
         self.optimizer.step()
