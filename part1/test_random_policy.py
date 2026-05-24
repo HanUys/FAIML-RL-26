@@ -9,9 +9,10 @@
     What is an action here?
 """
 import gymnasium as gym
+import mujoco
 
 def main():
-    render = False
+    render = True
 
     if render:
         env = gym.make('Hopper-v4', render_mode='human')
@@ -20,7 +21,7 @@ def main():
     print('State space:', env.observation_space)  # state-space
     print('Action space:', env.action_space)  # action-space
 
-    n_episodes = 50
+    n_episodes = 10
 
     for ep in range(n_episodes):  
         done = False
