@@ -16,6 +16,7 @@ logs/
 *.avi
 *.gif
 part1/results/
+part1/models/
 
 # Python / environment
 .env

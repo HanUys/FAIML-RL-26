@@ -1,18 +1,18 @@
-"""Train a control policy on the Hopper-v4 environment.
+"""Train Actor-Critic agents on Hopper-v4.
 
-Current stage:
-- REINFORCE without baseline
-- REINFORCE with constant baseline
-- Actor-Critic with TD or Monte Carlo critic targets
-- Command-line training
-- CSV result logging
+This script is dedicated only to Actor-Critic experiments.
+
+Supported variants:
+- Actor-Critic with one-step TD target
+- Actor-Critic with Monte Carlo return target
+- Optional advantage normalization
+- Critic loss coefficient
+- Entropy regularization
 
 Example usage:
-    python train.py --episodes 10 --render
-    python train.py --episodes 100 --algorithm reinforce --baseline-type none
-    python train.py --episodes 100 --algorithm reinforce --baseline-type constant --baseline-value 5
-    python train.py --episodes 100 --algorithm actor_critic --ac-target-type td
-    python train.py --episodes 100 --algorithm actor_critic --ac-target-type mc --normalize-advantages
+    python train_actor_critic.py --episodes 100 --ac-target-type td --run-name ac_td_100
+    python train_actor_critic.py --episodes 100 --ac-target-type mc --normalize-advantages --run-name ac_mc_norm_100
+    python train_actor_critic.py --episodes 1000 --ac-target-type mc --normalize-advantages --save-best-model --run-name ac_mc_norm_1000_seed42
 """
 
 import argparse
@@ -30,85 +30,26 @@ from agent import Agent, Policy
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Train policy-gradient agents on Hopper-v4"
-    )
+    parser = argparse.ArgumentParser(description="Train Actor-Critic on Hopper-v4")
 
     parser.add_argument(
         "--episodes",
         type=int,
-        default=10,
+        default=100,
         help="Number of training episodes",
     )
 
     parser.add_argument(
         "--render",
         action="store_true",
-        help="Render the environment with a MuJoCo window",
+        help="Render Hopper during training",
     )
 
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Random seed for reproducibility",
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="results",
-        help="Directory where training results will be saved",
-    )
-
-    parser.add_argument(
-        "--run-name",
-        type=str,
-        default="reinforce_no_baseline",
-        help="Name of this training run",
-    )
-
-    parser.add_argument(
-        "--algorithm",
-        type=str,
-        default="reinforce",
-        choices=["reinforce", "actor_critic"],
-        help="Training algorithm: reinforce or actor_critic",
-    )
-
-    parser.add_argument(
-        "--baseline-type",
-        type=str,
-        default="none",
-        choices=["none", "constant"],
-        help="Baseline type for REINFORCE: none or constant",
-    )
-
-    parser.add_argument(
-        "--baseline-value",
-        type=float,
-        default=0.0,
-        help="Constant baseline value used when baseline-type is constant",
-    )
-
-    parser.add_argument(
-        "--normalize-advantages",
-        action="store_true",
-        help="Normalize advantages before computing the policy loss",
-    )
-
-    parser.add_argument(
-        "--critic-loss-coef",
-        type=float,
-        default=0.5,
-        help="Weight of critic loss in Actor-Critic",
-    )
-
-    parser.add_argument(
-        "--entropy-coef",
-        type=float,
-        default=0.01,
-        help="Entropy bonus coefficient in Actor-Critic",
+        help="Random seed",
     )
 
     parser.add_argument(
@@ -117,6 +58,59 @@ def parse_args():
         default="td",
         choices=["td", "mc"],
         help="Actor-Critic target type: td or mc",
+    )
+
+    parser.add_argument(
+        "--normalize-advantages",
+        action="store_true",
+        help="Normalize advantages before actor update",
+    )
+
+    parser.add_argument(
+        "--critic-loss-coef",
+        type=float,
+        default=0.5,
+        help="Weight of critic loss",
+    )
+
+    parser.add_argument(
+        "--entropy-coef",
+        type=float,
+        default=0.01,
+        help="Entropy bonus coefficient",
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="results",
+        help="Base directory for CSV outputs",
+    )
+
+    parser.add_argument(
+        "--model-dir",
+        type=str,
+        default="models",
+        help="Base directory for saved models",
+    )
+
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default="actor_critic_run",
+        help="Experiment name",
+    )
+
+    parser.add_argument(
+        "--save-model",
+        action="store_true",
+        help="Save final policy weights",
+    )
+
+    parser.add_argument(
+        "--save-best-model",
+        action="store_true",
+        help="Save best policy according to moving average return",
     )
 
     return parser.parse_args()
@@ -128,32 +122,41 @@ def set_seed(seed):
     torch.manual_seed(seed)
 
 
+def save_checkpoint(policy, path):
+    torch.save(policy.state_dict(), path)
+    print(f"Model saved to: {path}")
+
+
 def main():
     args = parse_args()
     set_seed(args.seed)
 
+    output_dir = Path(args.output_dir) / "actor_critic"
+    model_dir = Path(args.model_dir) / "actor_critic"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
     render_mode = "human" if args.render else "rgb_array"
     env = gym.make("Hopper-v4", render_mode=render_mode)
-
-    print("State space:", env.observation_space)
-    print("Action space:", env.action_space)
 
     state_space = env.observation_space.shape[0]
     action_space = env.action_space.shape[0]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    print("=== Actor-Critic training ===")
+    print("State space:", env.observation_space)
+    print("Action space:", env.action_space)
     print("Using device:", device)
     print("Episodes:", args.episodes)
     print("Render:", args.render)
     print("Seed:", args.seed)
-    print("Algorithm:", args.algorithm)
-    print("Baseline type:", args.baseline_type)
-    print("Baseline value:", args.baseline_value)
+    print("AC target type:", args.ac_target_type)
     print("Normalize advantages:", args.normalize_advantages)
     print("Critic loss coef:", args.critic_loss_coef)
     print("Entropy coef:", args.entropy_coef)
-    print("Actor-Critic target type:", args.ac_target_type)
+    print("Run name:", args.run_name)
 
     policy = Policy(
         state_space=state_space,
@@ -163,22 +166,21 @@ def main():
     agent = Agent(
         policy=policy,
         device=device,
-        algorithm=args.algorithm,
-        baseline_type=args.baseline_type,
-        baseline_value=args.baseline_value,
+        algorithm="actor_critic",
         normalize_advantages=args.normalize_advantages,
         critic_loss_coef=args.critic_loss_coef,
         entropy_coef=args.entropy_coef,
         ac_target_type=args.ac_target_type,
     )
 
-    recent_returns = deque(maxlen=20)
-
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     csv_path = output_dir / f"{args.run_name}.csv"
+    final_model_path = model_dir / f"{args.run_name}.pth"
+    best_model_path = model_dir / f"{args.run_name}_best.pth"
+
+    recent_returns = deque(maxlen=20)
     results = []
+
+    best_moving_avg_return = -float("inf")
 
     start_time = time.time()
 
@@ -205,7 +207,7 @@ def main():
             )
 
             state = next_state
-            episode_reward += reward
+            episode_reward += float(reward)
             step_count += 1
 
             if args.render:
@@ -217,6 +219,10 @@ def main():
         moving_avg_return = float(np.mean(recent_returns))
         elapsed_time = time.time() - start_time
 
+        if args.save_best_model and moving_avg_return > best_moving_avg_return:
+            best_moving_avg_return = moving_avg_return
+            save_checkpoint(policy, best_model_path)
+
         results.append(
             {
                 "episode": episode,
@@ -226,13 +232,11 @@ def main():
                 "loss": loss,
                 "elapsed_time_sec": elapsed_time,
                 "seed": args.seed,
-                "algorithm": args.algorithm,
-                "baseline_type": args.baseline_type,
-                "baseline_value": args.baseline_value,
+                "algorithm": "actor_critic",
+                "ac_target_type": args.ac_target_type,
                 "normalize_advantages": args.normalize_advantages,
                 "critic_loss_coef": args.critic_loss_coef,
                 "entropy_coef": args.entropy_coef,
-                "ac_target_type": args.ac_target_type,
             }
         )
 
@@ -262,18 +266,19 @@ def main():
                 "elapsed_time_sec",
                 "seed",
                 "algorithm",
-                "baseline_type",
-                "baseline_value",
+                "ac_target_type",
                 "normalize_advantages",
                 "critic_loss_coef",
                 "entropy_coef",
-                "ac_target_type",
             ],
         )
         writer.writeheader()
         writer.writerows(results)
 
     print(f"Results saved to: {csv_path}")
+
+    if args.save_model:
+        save_checkpoint(policy, final_model_path)
 
     env.close()
 
